@@ -141,7 +141,6 @@ def get_user_info(user_id: str) -> Optional[Dict[str, Any]]:
     }
     return mock_users.get(user_id)
 
-# 1. 인가 코드 요청
 @app.get("/api/oauth/authorize")
 async def authorize(
     client_id: str,
@@ -150,6 +149,12 @@ async def authorize(
     response: Response,
     request: Request
 ):
+    # 필수 파라미터 검증
+    if not client_id or not redirect_uri or not state:
+        error_uri = f"{redirect_uri}?error=invalid_request&error_description=필수+파라미터가+누락되었습니다.&state={state}"
+        print("error_uri", error_uri)
+        return RedirectResponse(url=error_uri, status_code=302)
+
     # 클라이언트 검증
     if not verify_client(client_id):
         error_uri = f"{redirect_uri}?error=invalid_request&error_description=client_id가+잘못된+값입니다.&state={state}"
@@ -163,55 +168,37 @@ async def authorize(
         return RedirectResponse(url=error_uri, status_code=302)
     
     # 세션에서 로그인 상태 확인
-    ## session_id 쿠키 추가는 로그인 로직에서 구현 필요 (실제 세션 관리 필요)
     session_id = request.cookies.get("session_id")
-    # Mock 데이터 (실제 구현에서는 세션에서 사용자 ID 조회)
-    # user_id = get_user_from_session(session_id) if session_id else None
-    user_id= "user123"
+    user_id = get_user_from_session(session_id) if session_id else None
+    user_id = "user123"  # Mock 데이터로 대체
 
     if not user_id:
-        # 실제 구현에서는 로그인 페이지로 리다이렉트
-        # 로그인 화면 반환
-        return """
-        <html>
-            <head><title>로그인</title></head>
-            <body>
-                <h1>로그인이 필요합니다</h1>
-                <form action="/api/login" method="post">
-                    <input type="hidden" name="client_id" value="{client_id}">
-                    <input type="hidden" name="redirect_uri" value="{redirect_uri}">
-                    <input type="hidden" name="state" value="{state}">
-                    <label for="username">사용자 이름:</label>
-                    <input type="text" id="username" name="username"><br>
-                    <label for="password">비밀번호:</label>
-                    <input type="password" id="password" name="password"><br>
-                    <button type="submit">로그인</button>
-                </form>
-            </body>
-        </html>
-        """.format(client_id=client_id, redirect_uri=redirect_uri, state=state)
+        # 로그인 세션이 없는 경우, 로그인 페이지로 리다이렉트
+        login_uri = ""
+        return RedirectResponse(url=login_uri, status_code=302)
     
-    # 인가 코드 생성 및 저장
-    auth_code = generate_auth_code()
-    expires_at = datetime.now() + timedelta(minutes=10)  # 10분 유효
+    try:
+        # 인가 코드 생성 및 저장
+        auth_code = generate_auth_code()
+        expires_at = datetime.now() + timedelta(minutes=10)  # 10분 유효
+        
+        auth_codes[auth_code] = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "user_id": user_id,
+            "expires_at": expires_at
+        }
+        
+        # 인가 코드와 함께 리다이렉트
+        success_uri = f"{redirect_uri}?auth_code={auth_code}&state={state}"
+        print("success_url", success_uri)
+        return RedirectResponse(url=success_uri, status_code=302)
     
-    # 인가 코드 저장
-    """
-    # 실제 구현에서는 인가 코드를 DB에 저장
-    # INSERT INTO auth_codes (code, client_id, redirect_uri, user_id, expires_at)
-    # VALUES (%s, %s, %s, %s, %s)
-    """
-    auth_codes[auth_code] = {
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "user_id": user_id,
-        "expires_at": expires_at
-    }
-    
-    # 인가 코드와 함께 리다이렉트
-    success_uri = f"{redirect_uri}?auth_code={auth_code}&state={state}"
-    print("sucess_url", success_uri)
-    return RedirectResponse(url=success_uri, status_code=302)
+    except Exception:
+        # 알 수 없는 오류 처리
+        error_uri = f"{redirect_uri}?error=unknown&error_description=알+수+없는+오류가+발생하였습니다.&state={state}"
+        print("error_uri", error_uri)
+        return RedirectResponse(url=error_uri, status_code=302)
 
 @app.post("/api/oauth/token", response_model=TokenResponse)
 async def get_token(
