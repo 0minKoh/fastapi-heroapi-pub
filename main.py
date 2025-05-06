@@ -1,6 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException, Request, Header, Response, status, Form
+from fastapi import FastAPI, HTTPException, Request, Header, Response, Form
 from fastapi.responses import RedirectResponse
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from pydantic import BaseModel
 import secrets
 import uuid
@@ -9,7 +9,6 @@ import base64
 import os
 from datetime import datetime, timedelta
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends.openssl.backend import backend
 
 # FastAPI 앱 초기화
 app = FastAPI(title="Oauth 2.0 Supaja Hero API")
@@ -18,8 +17,8 @@ app = FastAPI(title="Oauth 2.0 Supaja Hero API")
 class OAuthConfig:
     CLIENT_ID = "example_client_id"
     CLIENT_SECRET = "example_client_secret"
-    REDIRECT_URI = "https://example.com/callback"
-    ENCRYPT_KEY = b"a_32_byte_key_for_aes_256_encryption"  # 32바이트 키 (AES-256)
+    REDIRECT_URI = "http://127.0.0.1:8000/redoc"
+    ENCRYPT_KEY = b"this_is_a_32_byte_key_for_aes256"
     ALLOWED_IP = ["127.0.0.1"]
 
 # 임시 저장소 (실제 구현에서는 데이터베이스 사용)
@@ -154,21 +153,43 @@ async def authorize(
     # 클라이언트 검증
     if not verify_client(client_id):
         error_uri = f"{redirect_uri}?error=invalid_request&error_description=client_id가+잘못된+값입니다.&state={state}"
+        print("error_uri", error_uri)
         return RedirectResponse(url=error_uri, status_code=302)
     
     # 리다이렉트 URI 검증
     if not verify_redirect_uri(client_id, redirect_uri):
         error_uri = f"{redirect_uri}?error=invalid_request&error_description=redirect_uri가+잘못된+값입니다.&state={state}"
+        print("error_uri", error_uri)
         return RedirectResponse(url=error_uri, status_code=302)
     
     # 세션에서 로그인 상태 확인
+    ## session_id 쿠키 추가는 로그인 로직에서 구현 필요 (실제 세션 관리 필요)
     session_id = request.cookies.get("session_id")
-    user_id = get_user_from_session(session_id) if session_id else None
-    
+    # Mock 데이터 (실제 구현에서는 세션에서 사용자 ID 조회)
+    # user_id = get_user_from_session(session_id) if session_id else None
+    user_id= "user123"
+
     if not user_id:
         # 실제 구현에서는 로그인 페이지로 리다이렉트
-        error_uri = f"{redirect_uri}?error=login_required&error_description=세션이+만료되었습니다.&state={state}"
-        return RedirectResponse(url=error_uri, status_code=302)
+        # 로그인 화면 반환
+        return """
+        <html>
+            <head><title>로그인</title></head>
+            <body>
+                <h1>로그인이 필요합니다</h1>
+                <form action="/api/login" method="post">
+                    <input type="hidden" name="client_id" value="{client_id}">
+                    <input type="hidden" name="redirect_uri" value="{redirect_uri}">
+                    <input type="hidden" name="state" value="{state}">
+                    <label for="username">사용자 이름:</label>
+                    <input type="text" id="username" name="username"><br>
+                    <label for="password">비밀번호:</label>
+                    <input type="password" id="password" name="password"><br>
+                    <button type="submit">로그인</button>
+                </form>
+            </body>
+        </html>
+        """.format(client_id=client_id, redirect_uri=redirect_uri, state=state)
     
     # 인가 코드 생성 및 저장
     auth_code = generate_auth_code()
@@ -189,6 +210,7 @@ async def authorize(
     
     # 인가 코드와 함께 리다이렉트
     success_uri = f"{redirect_uri}?auth_code={auth_code}&state={state}"
+    print("sucess_url", success_uri)
     return RedirectResponse(url=success_uri, status_code=302)
 
 @app.post("/api/oauth/token", response_model=TokenResponse)
@@ -273,7 +295,8 @@ async def get_token(
     }
 
 @app.get("/api/oauth/user/info", response_model=UserInfoResponse)
-async def get_user_info_endpoint(authorization: str = Header(...)):
+async def get_user_info_endpoint(authorization: str = Header(..., alias="Authorization")):
+    print("authorization", authorization)
     # Bearer 토큰 추출
     if not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -301,5 +324,15 @@ async def get_user_info_endpoint(authorization: str = Header(...)):
     
     # 사용자 정보 암호화
     encrypted_data = encrypt_data(user_info, OAuthConfig.ENCRYPT_KEY)
+
+    # 필요하다면, 토큰을 Expire 되도록 설정할 수 있습니다.
+    """
+    실제 구현에서는 DB에서 액세스 토큰 만료 처리하거나
+    # UPDATE access_tokens SET expires_at = NOW() WHERE token = %s
+    ## ---
+    # 실제 구현에서는 DB에서 액세스 토큰 삭제
+    # DELETE FROM access_tokens WHERE token = %s
+    """
+    del access_tokens[token]
     
     return encrypted_data
