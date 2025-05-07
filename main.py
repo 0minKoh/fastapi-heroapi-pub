@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Request, Header, Response, Form
+from fastapi import Request
 from fastapi.responses import RedirectResponse
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
@@ -59,18 +60,22 @@ def encrypt_data(data: Dict[str, Any], encrypt_key: bytes) -> Dict[str, str]:
     }
 
 # 클라이언트 검증
-def verify_client(client_id: str, client_secret: Optional[str] = None) -> bool:
+def verify_client(client_id: str, request_ip: Optional[str] = None, client_secret: Optional[str] = None) -> bool:
     """
-    클라이언트 ID와 시크릿 유효성 검증
+    클라이언트 ID, 시크릿, 및 허용된 IP 유효성 검증
     
     # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
-    SELECT client_id, client_secret FROM oauth_clients 
+    SELECT client_id, client_secret, ip_address FROM oauth_clients 
     WHERE client_id = %s AND (client_secret IS NULL OR client_secret = %s)
+    AND ip_address IN (SELECT ip_address FROM allowed_ips WHERE client_id = %s)
     """
     if client_id != OAuthConfig.CLIENT_ID:
         return False
     
     if client_secret is not None and client_secret != OAuthConfig.CLIENT_SECRET:
+        return False
+    
+    if request_ip is not None and request_ip not in OAuthConfig.ALLOWED_IP:
         return False
     
     return True
@@ -263,10 +268,11 @@ def get_user_info(user_id: str) -> Optional[Dict[str, Any]]:
 async def authorize(
     client_id: str,
     redirect_uri: str,
-    state: str
+    state: str,
+    request: Request  # Request 객체 추가
 ):
     # 클라이언트 검증
-    if not verify_client(client_id):
+    if not verify_client(client_id, request.client.host):
         error_uri = f"{redirect_uri}?error=invalid_request&error_description=Invalid+client_id&state={state}"
         return RedirectResponse(url=error_uri, status_code=302)
     
@@ -288,7 +294,7 @@ async def internal_authorize(
     client_id: str = Form(...),
     redirect_uri: str = Form(...),
     state: str = Form(...),
-    user_id: str = Form(...)  # 로그인 성공 후 전달된 사용자 ID
+    user_id: str = Form(...)
 ):
     # 클라이언트 검증
     if not verify_client(client_id):
@@ -310,6 +316,7 @@ async def internal_authorize(
 
 @app.post("/api/oauth/token", response_model=TokenResponse)
 async def get_token(
+    request: Request,
     grant_type: str = Form(...),
     client_id: str = Form(...),
     client_secret: str = Form(...),
@@ -325,7 +332,7 @@ async def get_token(
             )
         
         # 클라이언트 인증
-        if not verify_client(client_id, client_secret):
+        if not verify_client(client_id, request.client.host, client_secret):
             raise HTTPException(
                 status_code=400,
                 detail="클라이언트 인증에 실패했습니다."
@@ -364,8 +371,6 @@ async def get_token(
 @app.get("/api/oauth/user/info", response_model=UserInfoResponse)
 async def get_user_info_endpoint(authorization: str = Header(..., alias="Authorization")):
     try:
-        print("authorization", authorization)
-        
         # Bearer 토큰 추출
         if not authorization.startswith("Bearer "):
             raise HTTPException(
