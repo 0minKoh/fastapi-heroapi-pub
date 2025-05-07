@@ -58,14 +58,6 @@ def encrypt_data(data: Dict[str, Any], encrypt_key: bytes) -> Dict[str, str]:
         "iv": base64.b64encode(iv).decode('utf-8')
     }
 
-# 인가 코드 생성
-def generate_auth_code() -> str:
-    return secrets.token_urlsafe(32)
-
-# 액세스 토큰 생성
-def generate_access_token() -> str:
-    return secrets.token_urlsafe(64)
-
 # 클라이언트 검증
 def verify_client(client_id: str, client_secret: Optional[str] = None) -> bool:
     """
@@ -90,6 +82,134 @@ def verify_redirect_uri(client_id: str, redirect_uri: str) -> bool:
     # SELECT uri FROM oauth_redirect_uris WHERE client_id = %s AND uri = %s
     """
     return redirect_uri == OAuthConfig.REDIRECT_URI
+
+# 인가 코드 생성
+def generate_auth_code() -> str:
+    return secrets.token_urlsafe(32)
+
+# 인가 코드 저장
+def save_auth_code(code: str, client_id: str, redirect_uri: str, user_id: str, expires_at: datetime):
+    """
+    인가 코드 저장 (임시 저장소 사용)
+    
+    # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
+    INSERT INTO auth_codes (code, client_id, redirect_uri, user_id, expires_at) VALUES (%s, %s, %s, %s, %s);
+    """
+    auth_codes[code] = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "user_id": user_id,
+        "expires_at": expires_at
+    }
+
+# 인가 코드 조회 및 유효성 검증
+def get_auth_code_from_db(auth_code: str) -> Optional[Dict[str, Any]]:
+    """
+    인가 코드 조회 및 유효성 검증
+
+    # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
+    SELECT client_id, redirect_uri, user_id, expires_at 
+    FROM auth_codes 
+    WHERE code = %s;
+    """
+    code_data = auth_codes.get(auth_code)  # 임시 저장소에서 조회
+    if not code_data:
+        raise HTTPException(
+            status_code=400,
+            detail="유효하지 않은 인가 코드입니다."
+        )
+    
+    # 인가 코드 만료 시간 검증
+    if datetime.now() > code_data["expires_at"]:
+        """
+        # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
+        DELETE FROM auth_codes WHERE code = %s;
+        """
+        del auth_codes[auth_code]  # 만료된 인가 코드 삭제
+        raise HTTPException(
+            status_code=400,
+            detail="인가 코드가 만료되었습니다."
+        )
+    
+    return code_data
+
+# 인가 코드 삭제
+def delete_auth_code(auth_code: str):
+    """
+    인가 코드 삭제
+
+    # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
+    DELETE FROM auth_codes WHERE code = %s;
+    """
+    if auth_code in auth_codes:
+        del auth_codes[auth_code]  # 임시 저장소에서 삭제
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="유효하지 않은 인가 코드입니다."
+        )
+
+# 액세스 토큰 생성
+def generate_access_token() -> str:
+    return secrets.token_urlsafe(64)
+
+def save_access_token_to_db(token: str, user_id: str, expires_at: datetime):
+    """
+    액세스 토큰 저장
+
+    # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
+    INSERT INTO access_tokens (token, user_id, expires_at)
+    VALUES (%s, %s, %s);
+    """
+    access_tokens[token] = {
+        "user_id": user_id,
+        "expires_at": expires_at
+    }
+
+# 액세스 토큰 검증
+def validate_access_token_from_db(token: str) -> str:
+    """
+    액세스 토큰 유효성 검증 및 사용자 ID 반환
+
+    # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
+    SELECT user_id, expires_at FROM access_tokens WHERE token = %s;
+    """
+    token_data = access_tokens.get(token)  # 임시 저장소에서 조회
+    if not token_data:
+        raise HTTPException(
+            status_code=401,
+            detail="액세스 토큰이 유효하지 않거나 만료되었습니다."
+        )
+    
+    # 토큰 만료 시간 검증
+    if datetime.now() > token_data["expires_at"]:
+        """
+        # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
+        DELETE FROM access_tokens WHERE token = %s;
+        """
+        del access_tokens[token]  # 만료된 토큰 삭제
+        raise HTTPException(
+            status_code=401,
+            detail="액세스 토큰이 만료되었습니다."
+        )
+    
+    return token_data["user_id"]
+
+# 액세스 토큰 삭제
+def delete_access_token(token: str):
+    """
+    액세스 토큰 삭제
+
+    # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
+    DELETE FROM access_tokens WHERE token = %s;
+    """
+    if token in access_tokens:
+        del access_tokens[token]  # 임시 저장소에서 삭제
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="유효하지 않은 액세스 토큰입니다."
+        )
 
 # 세션에서 사용자 ID 조회
 def get_user_from_session(session_id: str) -> Optional[str]:
@@ -130,16 +250,14 @@ def get_user_info(user_id: str) -> Optional[Dict[str, Any]]:
     FROM users WHERE id = %s
     """
     # Mock 데이터
-    mock_users = {
-        "user123": {
+    mock_user =  {
             "id": str(uuid.uuid4()),
             "is_firefighter": True,
             "name": "홍길동",
             "phone_number": "010-1234-5678",
             "birth_date": "1990-01-01"
         }
-    }
-    return mock_users.get(user_id)
+    return mock_user
 
 @app.get("/api/oauth/authorize")
 async def authorize(
@@ -183,18 +301,7 @@ async def internal_authorize(
     # 인가 코드 생성 및 저장
     auth_code = generate_auth_code()
     expires_at = datetime.now() + timedelta(minutes=10)  # 10분 유효
-
-    """
-    # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
-    INSERT INTO auth_codes (auth_code, client_id, redirect_uri, user_id, expires_at)
-    VALUES (%s, %s, %s, %s, %s);
-    """
-    auth_codes[auth_code] = {
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "user_id": user_id,
-        "expires_at": expires_at
-    }
+    save_auth_code(auth_code, client_id, redirect_uri, user_id, expires_at)
     
     # 성공적으로 인가 코드를 발급한 후 리다이렉트
     success_uri = f"{redirect_uri}?auth_code={auth_code}&state={state}"
@@ -224,32 +331,8 @@ async def get_token(
                 detail="클라이언트 인증에 실패했습니다."
             )
         
-        # 인가 코드 조회
-        """
-        # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
-        SELECT client_id, redirect_uri, user_id, expires_at FROM auth_codes WHERE auth_code = %s;
-        """
-        code_data = auth_codes.get(auth_code)
-        if not code_data:
-            raise HTTPException(
-                status_code=400,
-                detail="유효하지 않은 인가 코드입니다."
-            )
-        
-        # 인가 코드 만료 시간 검증
-        if datetime.now() > code_data["expires_at"]:
-            del auth_codes[auth_code]  # 만료된 인가 코드 삭제
-            raise HTTPException(
-                status_code=400,
-                detail="인가 코드가 만료되었습니다."
-            )
-        
-        # 클라이언트 및 리다이렉트 URI 검증
-        if code_data["client_id"] != client_id or code_data["redirect_uri"] != redirect_uri:
-            raise HTTPException(
-                status_code=400,
-                detail="클라이언트 정보가 일치하지 않습니다."
-            )
+        # 인가 코드 조회 및 검증
+        code_data = get_auth_code_from_db(auth_code)
         
         # 액세스 토큰 생성
         access_token = generate_access_token()
@@ -257,13 +340,10 @@ async def get_token(
         expires_at = datetime.now() + timedelta(minutes=10)  # 10분 유효
         
         # 액세스 토큰 저장
-        access_tokens[access_token] = {
-            "user_id": user_id,
-            "expires_at": expires_at
-        }
+        save_access_token_to_db(access_token, user_id, expires_at)
         
         # 인가 코드는 1회용이므로 사용 후 삭제
-        del auth_codes[auth_code]
+        delete_auth_code(auth_code)
         
         # 성공 응답 반환
         return {
@@ -297,11 +377,6 @@ async def get_user_info_endpoint(authorization: str = Header(..., alias="Authori
         
         # 토큰 유효성 검증
         user_id = validate_access_token(token)
-        if not user_id:
-            raise HTTPException(
-                status_code=401,
-                detail="액세스 토큰이 유효하지 않거나 만료되었습니다."
-            )
         
         # 사용자 정보 조회
         user_info = get_user_info(user_id)
@@ -315,14 +390,7 @@ async def get_user_info_endpoint(authorization: str = Header(..., alias="Authori
         encrypted_data = encrypt_data(user_info, OAuthConfig.ENCRYPT_KEY)
 
         # 필요하다면, 토큰을 만료 처리
-        """
-        실제 구현에서는 DB에서 액세스 토큰 만료 처리하거나
-        # UPDATE access_tokens SET expires_at = NOW() WHERE token = %s
-        ## ---
-        # 실제 구현에서는 DB에서 액세스 토큰 삭제
-        # DELETE FROM access_tokens WHERE token = %s
-        """
-        del access_tokens[token]
+        delete_access_token(token)
         
         return encrypted_data
 
