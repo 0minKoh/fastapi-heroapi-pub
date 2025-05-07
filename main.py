@@ -72,8 +72,8 @@ def verify_client(client_id: str, client_secret: Optional[str] = None) -> bool:
     클라이언트 ID와 시크릿 유효성 검증
     
     # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
-    # SELECT client_id, client_secret FROM oauth_clients 
-    # WHERE client_id = %s AND (client_secret IS NULL OR client_secret = %s)
+    SELECT client_id, client_secret FROM oauth_clients 
+    WHERE client_id = %s AND (client_secret IS NULL OR client_secret = %s)
     """
     if client_id != OAuthConfig.CLIENT_ID:
         return False
@@ -106,7 +106,7 @@ def validate_access_token(token: str) -> Optional[str]:
     액세스 토큰 유효성 검증 및 사용자 ID 반환
     
     # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
-    # SELECT user_id, expires_at FROM access_tokens WHERE token = %s
+    SELECT user_id, expires_at FROM access_tokens WHERE token = %s
     """
     token_data = access_tokens.get(token)
     if not token_data:
@@ -126,8 +126,8 @@ def get_user_info(user_id: str) -> Optional[Dict[str, Any]]:
     사용자 정보 조회
     
     # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
-    # SELECT id, is_firefighter, name, phone_number, birth_date 
-    # FROM users WHERE id = %s
+    SELECT id, is_firefighter, name, phone_number, birth_date 
+    FROM users WHERE id = %s
     """
     # Mock 데이터
     mock_users = {
@@ -145,60 +145,60 @@ def get_user_info(user_id: str) -> Optional[Dict[str, Any]]:
 async def authorize(
     client_id: str,
     redirect_uri: str,
-    state: str,
-    response: Response,
-    request: Request
+    state: str
 ):
-    # 필수 파라미터 검증
-    if not client_id or not redirect_uri or not state:
-        error_uri = f"{redirect_uri}?error=invalid_request&error_description=필수+파라미터가+누락되었습니다.&state={state}"
-        print("error_uri", error_uri)
-        return RedirectResponse(url=error_uri, status_code=302)
-
     # 클라이언트 검증
     if not verify_client(client_id):
-        error_uri = f"{redirect_uri}?error=invalid_request&error_description=client_id가+잘못된+값입니다.&state={state}"
-        print("error_uri", error_uri)
+        error_uri = f"{redirect_uri}?error=invalid_request&error_description=Invalid+client_id&state={state}"
         return RedirectResponse(url=error_uri, status_code=302)
     
     # 리다이렉트 URI 검증
     if not verify_redirect_uri(client_id, redirect_uri):
-        error_uri = f"{redirect_uri}?error=invalid_request&error_description=redirect_uri가+잘못된+값입니다.&state={state}"
-        print("error_uri", error_uri)
+        error_uri = f"{redirect_uri}?error=invalid_request&error_description=Invalid+redirect_uri&state={state}"
         return RedirectResponse(url=error_uri, status_code=302)
     
-    # 세션에서 로그인 상태 확인
-    session_id = request.cookies.get("session_id")
-    user_id = get_user_from_session(session_id) if session_id else None
-    user_id = "user123"  # Mock 데이터로 대체
+    # 로그인 페이지로 리다이렉트
+    login_page_url = (
+        f"https://external-login.example.com/login"
+        f"?client_id={client_id}&redirect_uri={redirect_uri}&state={state}"
+    )
+    return RedirectResponse(url=login_page_url, status_code=302)
 
-    if not user_id:
-        # 로그인 세션이 없는 경우, 로그인 페이지로 리다이렉트
-        login_uri = ""
-        return RedirectResponse(url=login_uri, status_code=302)
+
+@app.post("/api/oauth/internal/authorize")
+async def internal_authorize(
+    client_id: str = Form(...),
+    redirect_uri: str = Form(...),
+    state: str = Form(...),
+    user_id: str = Form(...)  # 로그인 성공 후 전달된 사용자 ID
+):
+    # 클라이언트 검증
+    if not verify_client(client_id):
+        raise HTTPException(status_code=400, detail="Invalid client_id")
     
-    try:
-        # 인가 코드 생성 및 저장
-        auth_code = generate_auth_code()
-        expires_at = datetime.now() + timedelta(minutes=10)  # 10분 유효
-        
-        auth_codes[auth_code] = {
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "user_id": user_id,
-            "expires_at": expires_at
-        }
-        
-        # 인가 코드와 함께 리다이렉트
-        success_uri = f"{redirect_uri}?auth_code={auth_code}&state={state}"
-        print("success_url", success_uri)
-        return RedirectResponse(url=success_uri, status_code=302)
+    # 리다이렉트 URI 검증
+    if not verify_redirect_uri(client_id, redirect_uri):
+        raise HTTPException(status_code=400, detail="Invalid redirect_uri")
     
-    except Exception:
-        # 알 수 없는 오류 처리
-        error_uri = f"{redirect_uri}?error=unknown&error_description=알+수+없는+오류가+발생하였습니다.&state={state}"
-        print("error_uri", error_uri)
-        return RedirectResponse(url=error_uri, status_code=302)
+    # 인가 코드 생성 및 저장
+    auth_code = generate_auth_code()
+    expires_at = datetime.now() + timedelta(minutes=10)  # 10분 유효
+
+    """
+    # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
+    INSERT INTO auth_codes (auth_code, client_id, redirect_uri, user_id, expires_at)
+    VALUES (%s, %s, %s, %s, %s);
+    """
+    auth_codes[auth_code] = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "user_id": user_id,
+        "expires_at": expires_at
+    }
+    
+    # 성공적으로 인가 코드를 발급한 후 리다이렉트
+    success_uri = f"{redirect_uri}?auth_code={auth_code}&state={state}"
+    return RedirectResponse(url=success_uri, status_code=302)
 
 
 @app.post("/api/oauth/token", response_model=TokenResponse)
@@ -225,6 +225,10 @@ async def get_token(
             )
         
         # 인가 코드 조회
+        """
+        # 실제 구현에서는 아래와 같은 DB 쿼리로 대체해야 함
+        SELECT client_id, redirect_uri, user_id, expires_at FROM auth_codes WHERE auth_code = %s;
+        """
         code_data = auth_codes.get(auth_code)
         if not code_data:
             raise HTTPException(
@@ -250,7 +254,7 @@ async def get_token(
         # 액세스 토큰 생성
         access_token = generate_access_token()
         user_id = code_data["user_id"]
-        expires_at = datetime.now() + timedelta(hours=1)  # 1시간 유효
+        expires_at = datetime.now() + timedelta(minutes=10)  # 10분 유효
         
         # 액세스 토큰 저장
         access_tokens[access_token] = {

@@ -12,20 +12,21 @@ class OAuthConfig:
 
 def get_auth_code():
     """
-    /api/oauth/authorize 엔드포인트를 호출하여 인가 코드를 얻는 함수
+    /api/oauth/internal/authorize 엔드포인트를 호출하여 인가 코드를 얻는 함수
     """
     # API URL
-    url = "http://127.0.0.1:8000/api/oauth/authorize"
+    url = "http://127.0.0.1:8000/api/oauth/internal/authorize"
 
-    # 요청 파라미터
-    params = {
+    # 요청 데이터 (application/x-www-form-urlencoded 형식)
+    data = {
         "client_id": OAuthConfig.CLIENT_ID,
         "redirect_uri": OAuthConfig.REDIRECT_URI,
-        "state": "test_state"  # CSRF 방지를 위한 상태 값
+        "state": "test_state",  # CSRF 방지를 위한 상태 값
+        "user_id": "user123",  # 로그인 후 사용자 ID
     }
 
     # API 호출
-    response = requests.get(url, params=params)
+    response = requests.post(url, data=data)
 
     # 응답 처리
     if response.status_code == 302:  # 리다이렉트 응답
@@ -33,8 +34,8 @@ def get_auth_code():
         print("Redirect URL:", redirect_url)
 
         # 인가 코드 추출
-        if "auth_code=" in redirect_url:
-            auth_code = redirect_url.split("auth_code=")[1].split("&")[0]
+        if "code=" in redirect_url:
+            auth_code = redirect_url.split("code=")[1].split("&")[0]
             print("Authorization Code:", auth_code)
             return auth_code
         else:
@@ -42,10 +43,10 @@ def get_auth_code():
             return None
     else:
         if response.status_code == 200 and "auth_code=" in response.url:
-            # URL 파라미터 중 auth_code를 추출
-            auth_code = response.url.split("auth_code=")[1].split("&")[0]
-            print("Authorization Code:", auth_code)
-            return auth_code
+          # URL 파라미터 중 auth_code를 추출
+          auth_code = response.url.split("auth_code=")[1].split("&")[0]
+          print("Authorization Code:", auth_code)
+          return auth_code
         else:
           print("Error:", response.status_code, response.text)
           return None
